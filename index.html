@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <title>KS Træning – Historie, Religion og Samfundsfag</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Ekstern CSS -->
+  <link rel="stylesheet" href="ks.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>KS Træning</h1>
+        <small>Historie · Religion · Samfundsfag – én opgave ad gangen</small>
+      </div>
+      <div class="mode-switch" aria-label="Træningsmode">
+        <button class="mode-btn active" data-mode="flash">Flashcards</button>
+        <button class="mode-btn" data-mode="mcq">Multiple Choice</button>
+      </div>
+    </header>
+
+    <div class="top-row">
+      <div class="subject-filters" aria-label="Vælg fag">
+        <span class="label">Fag</span>
+        <label class="chip active" data-subject="historie">
+          <span class="dot"></span>
+          <span>Historie</span>
+        </label>
+        <label class="chip active" data-subject="religion">
+          <span class="dot"></span>
+          <span>Religion</span>
+        </label>
+        <label class="chip active" data-subject="samfundsfag">
+          <span class="dot"></span>
+          <span>Samfundsfag</span>
+        </label>
+      </div>
+      <div class="stats-row">
+        <span class="pill" id="count-indicator">0 spørgsmål i puljen</span>
+        <span class="pill" id="progress-indicator">0 besvaret i denne session</span>
+      </div>
+    </div>
+
+    <main class="card" aria-live="polite">
+      <div class="card-header">
+        <span class="subject-tag" id="subject-tag">Vælg mindst ét fag</span>
+        <span class="mode-label" id="mode-label">FLASHCARDS</span>
+      </div>
+      <div class="prompt">
+        <p id="question-text">Vælg fag og tryk på “Næste opgave” for at begynde.</p>
+      </div>
+
+      <div class="mcq-options" id="mcq-options" hidden></div>
+
+      <div class="answer hidden" id="answer-block">
+        <strong>Svar:</strong>
+        <div id="answer-text"></div>
+      </div>
+
+      <div class="controls">
+        <div class="controls-left">
+          <label style="display:inline-flex;align-items:center;gap:0.25rem;cursor:pointer;">
+            <input type="checkbox" id="auto-advance" style="accent-color:#4f46e5;" />
+            <span>Auto-næste i MCQ ved korrekt svar</span>
+          </label>
+        </div>
+        <div class="controls-right">
+          <button class="secondary" id="show-answer-btn">Vis svar</button>
+          <button class="primary" id="next-btn">Næste opgave</button>
+        </div>
+      </div>
+
+      <div class="helper-note">
+        Tip: Brug Flashcards til begreber og detaljer – skift derefter til Multiple Choice for eksamenslignende træning.
+      </div>
+    </main>
+  </div>
+
+  <!-- Eksterne spørgsmaalsfiler -->
+  <script src="questions-historie.js"></script>
+  <script src="questions-religion.js"></script>
+  <script src="questions-samfundsfag.js"></script>
+
+  <script>
+    // Samlet spørgsmålspulje fra de tre filer
+    const QUESTIONS = [
+      ...(window.HISTORIE_QUESTIONS || []),
+      ...(window.RELIGION_QUESTIONS || []),
+      ...(window.SAMFUNDSFAG_QUESTIONS || [])
+    ];
+
+    const modeButtons = document.querySelectorAll('.mode-btn');
+    const subjectChips = document.querySelectorAll('.chip');
+    const questionText = document.getElementById('question-text');
+    const answerBlock = document.getElementById('answer-block');
+    const answerText = document.getElementById('answer-text');
+    const subjectTag = document.getElementById('subject-tag');
+    const modeLabel = document.getElementById('mode-label');
+    const showAnswerBtn = document.getElementById('show-answer-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const countIndicator = document.getElementById('count-indicator');
+    const progressIndicator = document.getElementById('progress-indicator');
+    const mcqOptionsContainer = document.getElementById('mcq-options');
+    const autoAdvanceCheckbox = document.getElementById('auto-advance');
+
+    let currentMode = 'flash';
+    let filteredQuestions = [];
+    let currentQuestion = null;
+    let answeredCount = 0;
+
+    function getActiveSubjects() {
+      const active = [];
+      subjectChips.forEach(chip => {
+        if (chip.classList.contains('active')) active.push(chip.dataset.subject);
+      });
+      return active;
+    }
+
+    function filterQuestions() {
+      const activeSubjects = getActiveSubjects();
+      if (activeSubjects.length === 0) {
+        filteredQuestions = [];
+      } else {
+        filteredQuestions = QUESTIONS.filter(q =>
+          q.subjects && q.subjects.some(s => activeSubjects.includes(s))
+        );
+      }
+      countIndicator.textContent = `${filteredQuestions.length} spørgsmål i puljen`;
+    }
+
+    function updateSubjectTag() {
+      const active = getActiveSubjects();
+      if (active.length === 0) {
+        subjectTag.textContent = 'Vælg mindst ét fag';
+        return;
+      }
+      const labels = {
+        historie: 'Historie',
+        religion: 'Religion',
+        samfundsfag: 'Samfundsfag'
+      };
+      const names = active.map(a => labels[a]);
+      subjectTag.textContent = names.join(' · ');
+    }
+
+    function setMode(mode) {
+      currentMode = mode;
+      modeButtons.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+      });
+      modeLabel.textContent = mode === 'flash' ? 'FLASHCARDS' : 'MULTIPLE CHOICE';
+      if (mode === 'flash') {
+        showAnswerBtn.disabled = false;
+        showAnswerBtn.textContent = 'Vis svar';
+        mcqOptionsContainer.hidden = true;
+      } else {
+        showAnswerBtn.disabled = true;
+        showAnswerBtn.textContent = 'Vis svar (kun flashcards)';
+        mcqOptionsContainer.hidden = false;
+      }
+      loadNextQuestion();
+    }
+
+    function randomFromArray(arr, excludeId) {
+      const pool = excludeId ? arr.filter(q => q.id !== excludeId) : arr.slice();
+      if (pool.length === 0) return null;
+      return pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    function loadNextQuestion() {
+      filterQuestions();
+      updateSubjectTag();
+      answerBlock.classList.add('hidden');
+      answerText.textContent = '';
+      mcqOptionsContainer.innerHTML = '';
+      mcqOptionsContainer.dataset.locked = '0';
+
+      if (!filteredQuestions.length) {
+        questionText.textContent =
+          'Der er ingen spørgsmål i den valgte kombination af fag. Tilføj spørgsmål i .js-filerne og vælg mindst ét fag.';
+        return;
+      }
+      currentQuestion = randomFromArray(filteredQuestions);
+      questionText.textContent = currentQuestion.q;
+
+      if (currentMode === 'flash') {
+        // svar vises manuelt
+      } else {
+        buildMcqOptions();
+      }
+    }
+
+    function buildMcqOptions() {
+      mcqOptionsContainer.innerHTML = '';
+      const correct = currentQuestion.a;
+      const others = filteredQuestions
+        .filter(q => q.id !== currentQuestion.id)
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 3)
+        .map(q => q.a);
+
+      const options = [correct, ...others].sort(() => Math.random() - 0.5);
+
+      options.forEach(text => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'mcq-option';
+        btn.innerHTML = `<span class="text">${text}</span>`;
+        btn.addEventListener('click', () => handleMcqClick(btn, text === correct));
+        mcqOptionsContainer.appendChild(btn);
+      });
+    }
+
+    function handleMcqClick(btn, isCorrect) {
+      if (mcqOptionsContainer.dataset.locked === '1') return;
+      mcqOptionsContainer.dataset.locked = '1';
+
+      const options = mcqOptionsContainer.querySelectorAll('.mcq-option');
+      options.forEach(opt => {
+        const text = opt.querySelector('.text').textContent;
+        if (text === currentQuestion.a) {
+          opt.classList.add('correct');
+        }
+      });
+
+      if (!isCorrect) {
+        btn.classList.add('incorrect');
+      } else {
+        answeredCount++;
+        progressIndicator.textContent = `${answeredCount} besvaret i denne session`;
+      }
+
+      if (autoAdvanceCheckbox.checked && isCorrect) {
+        setTimeout(() => {
+          mcqOptionsContainer.dataset.locked = '0';
+          loadNextQuestion();
+        }, 700);
+      } else {
+        setTimeout(() => {
+          mcqOptionsContainer.dataset.locked = '0';
+        }, 400);
+      }
+    }
+
+    // Event wiring
+    modeButtons.forEach(btn => {
+      btn.addEventListener('click', () => setMode(btn.dataset.mode));
+    });
+
+    subjectChips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        chip.classList.toggle('active');
+        filterQuestions();
+        updateSubjectTag();
+      });
+    });
+
+    showAnswerBtn.addEventListener('click', () => {
+      if (!currentQuestion || currentMode !== 'flash') return;
+      if (answerBlock.classList.contains('hidden')) {
+        answerText.textContent = currentQuestion.a;
+        answerBlock.classList.remove('hidden');
+      } else {
+        answerBlock.classList.add('hidden');
+        answerText.textContent = '';
+      }
+    });
+
+    nextBtn.addEventListener('click', () => {
+      loadNextQuestion();
+    });
+
+    // Initial state
+    filterQuestions();
+    updateSubjectTag();
+    loadNextQuestion();
+  </script>
+</body>
+</html>
